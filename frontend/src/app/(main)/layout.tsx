@@ -16,6 +16,28 @@ export default function MainLayout({
 }: {
   children: React.ReactNode;
 }) {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-50">
+          <div className="mx-auto flex min-h-screen max-w-7xl items-center justify-center px-4">
+            <div className="rounded-xl border border-gray-100 bg-white px-6 py-4 text-sm text-gray-500 shadow-sm">
+              Loading...
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <MainLayoutInner>{children}</MainLayoutInner>
+    </React.Suspense>
+  );
+}
+
+function MainLayoutInner({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
