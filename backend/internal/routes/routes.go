@@ -104,6 +104,7 @@ func registerGroupRoutes(mux *http.ServeMux, h *handlers.GroupHandler, authServi
 	mux.Handle("POST /api/groups/{id}/events", middleware.RequireAuth(authService, mutationLimiter.Middleware(http.HandlerFunc(h.CreateEvent))))
 	mux.Handle("GET /api/groups/{id}/events", middleware.RequireAuth(authService, http.HandlerFunc(h.GetEvents)))
 	mux.Handle("POST /api/events/{id}/rsvp", middleware.RequireAuth(authService, mutationLimiter.Middleware(http.HandlerFunc(h.RSVPEvent))))
+	mux.Handle("GET /api/events/{id}/attendees", middleware.RequireAuth(authService, http.HandlerFunc(h.GetEventAttendees)))
 }
 
 func registerChatRoutes(mux *http.ServeMux, h *handlers.ChatHandler, authService auth.Service, mutationLimiter *middleware.RateLimiter) {

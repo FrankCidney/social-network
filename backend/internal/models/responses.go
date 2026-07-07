@@ -74,6 +74,15 @@ type GroupDetailResponse struct {
 	MembershipStatus string      `json:"membership_status"`
 }
 
+type GroupListResponse struct {
+	ID          string      `json:"id"`
+	CreatorID   string      `json:"creator_id"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	CreatedAt   time.Time   `json:"created_at"`
+	Creator     *PublicUser `json:"creator"`
+}
+
 type PostResponse struct {
 	ID        string      `json:"id"`
 	Author    *PublicUser `json:"author"`

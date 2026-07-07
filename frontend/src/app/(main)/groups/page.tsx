@@ -25,6 +25,14 @@ const INITIAL_CREATE_FORM: CreateGroupFormState = {
 	description: '',
 };
 
+function getCreatorLabel(group: Group) {
+	if (group.creator) {
+		return `${group.creator.first_name} ${group.creator.last_name}`.trim();
+	}
+
+	return group.creator_id;
+}
+
 function normalizeGroupsResponse(response: Group[] | { groups?: Group[] } | null) {
 	if (Array.isArray(response)) {
 		return response;
@@ -206,7 +214,7 @@ export default function GroupsPage() {
 												Created {new Date(group.created_at).toLocaleDateString()}
 											</span>
 											<span className="rounded-full bg-indigo-50 px-2.5 py-1 text-indigo-700">
-												Creator: {group.creator_id}
+												Creator: {getCreatorLabel(group)}
 											</span>
 										</div>
 									</div>

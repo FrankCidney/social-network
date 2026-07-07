@@ -6,8 +6,10 @@ import { useParams } from 'next/navigation';
 import {
 	Calendar,
 	CalendarPlus,
+	Image as ImageIcon,
 	Loader,
-	MessageSquare,
+	LoaderCircle,
+	MessageCircle,
 	Check,
 	Send,
 	Sparkles,
@@ -22,6 +24,7 @@ import {
 	type GroupDetail,
 	type GroupEvent,
 	type GroupMessage,
+	type CommentResponse,
 	type PostResponse,
 	type ProfileResponse,
 	type PublicUser,
@@ -45,6 +48,23 @@ type GroupWorkspaceState = {
 	messages: GroupMessage[];
 };
 
+type CommentThreadState = {
+	items: CommentResponse[];
+	loading: boolean;
+	error: string | null;
+	loaded: boolean;
+	open: boolean;
+	draft: string;
+	draftImageFile: File | null;
+	draftImagePreviewUrl: string | null;
+	submitting: boolean;
+	replyParentId: string | null;
+	replyDraft: string;
+	replyImageFile: File | null;
+	replyImagePreviewUrl: string | null;
+	replySubmitting: boolean;
+};
+
 const INITIAL_STATE: GroupWorkspaceState = {
 	group: null,
 	profile: null,
@@ -52,6 +72,29 @@ const INITIAL_STATE: GroupWorkspaceState = {
 	posts: [],
 	messages: [],
 };
+
+function getInitialCommentThreadState(): CommentThreadState {
+	return {
+		items: [],
+		loading: false,
+		error: null,
+		loaded: false,
+		open: false,
+		draft: '',
+		draftImageFile: null,
+		draftImagePreviewUrl: null,
+		submitting: false,
+		replyParentId: null,
+		replyDraft: '',
+		replyImageFile: null,
+		replyImagePreviewUrl: null,
+		replySubmitting: false,
+	};
+}
+
+function countComments(items: CommentResponse[]): number {
+	return items.reduce((total, item) => total + 1 + countComments(item.replies), 0);
+}
 
 export default function GroupDetailPage() {
 	const params = useParams<{ id: string }>();
@@ -64,8 +107,11 @@ export default function GroupDetailPage() {
 	const [membershipNotice, setMembershipNotice] = React.useState<string | null>(null);
 	const [joinLoading, setJoinLoading] = React.useState(false);
 	const [postDraft, setPostDraft] = React.useState('');
+	const [postImageFile, setPostImageFile] = React.useState<File | null>(null);
+	const [postImagePreviewUrl, setPostImagePreviewUrl] = React.useState<string | null>(null);
 	const [postError, setPostError] = React.useState<string | null>(null);
 	const [postSubmitting, setPostSubmitting] = React.useState(false);
+	const [commentThreads, setCommentThreads] = React.useState<Record<string, CommentThreadState>>({});
 	const [messageDraft, setMessageDraft] = React.useState('');
 	const [messageSubmitting, setMessageSubmitting] = React.useState(false);
 	const [activeTab, setActiveTab] = React.useState<SideTab>('chat');
@@ -73,8 +119,10 @@ export default function GroupDetailPage() {
 	const [eventTitle, setEventTitle] = React.useState('');
 	const [eventDescription, setEventDescription] = React.useState('');
 	const [eventDate, setEventDate] = React.useState('');
+	const [eventCreateStatus, setEventCreateStatus] = React.useState<'' | 'going' | 'not_going'>('going');
 	const [eventError, setEventError] = React.useState<string | null>(null);
 	const [eventSubmitting, setEventSubmitting] = React.useState(false);
+	const [eventAttendees, setEventAttendees] = React.useState<Record<string, PublicUser[]>>({});
 	const [members, setMembers] = React.useState<PublicUser[]>([]);
 	const [membersLoading, setMembersLoading] = React.useState(false);
 	const [membersError, setMembersError] = React.useState<string | null>(null);
@@ -89,6 +137,7 @@ export default function GroupDetailPage() {
 	const [inviteError, setInviteError] = React.useState<string | null>(null);
 	const [eventResponses, setEventResponses] = React.useState<Record<string, 'going' | 'not_going'>>({});
 	const messageInputRef = React.useRef<HTMLInputElement>(null);
+	const postImageInputRef = React.useRef<HTMLInputElement>(null);
 
 	React.useEffect(() => {
 		if (!groupId) {
@@ -156,6 +205,20 @@ export default function GroupDetailPage() {
 	const membershipStatus = group?.membership_status ?? 'none';
 	const canInvite = membershipStatus === 'accepted' || isCreator;
 	const canModerateRequests = isCreator;
+
+	React.useEffect(() => {
+		if (!postImageFile) {
+			setPostImagePreviewUrl(null);
+			return;
+		}
+
+		const nextPreviewUrl = URL.createObjectURL(postImageFile);
+		setPostImagePreviewUrl(nextPreviewUrl);
+
+		return () => {
+			URL.revokeObjectURL(nextPreviewUrl);
+		};
+	}, [postImageFile]);
 
 	React.useEffect(() => {
 		if (!groupId || activeTab !== 'members' || membershipStatus !== 'accepted') {
@@ -246,6 +309,37 @@ export default function GroupDetailPage() {
 		};
 	}, [activeTab, canInvite, deferredInviteQuery, groupId]);
 
+	React.useEffect(() => {
+		if (membershipStatus !== 'accepted' || workspace.events.length === 0) {
+			return;
+		}
+
+		let cancelled = false;
+
+		const loadEventAttendees = async () => {
+			const attendeeEntries = await Promise.all(
+				workspace.events.map(async (event) => {
+					try {
+						const attendees = await groupAPI.getEventAttendees(event.id);
+						return [event.id, Array.isArray(attendees) ? attendees : []] as const;
+					} catch {
+						return [event.id, []] as const;
+					}
+				})
+			);
+
+			if (!cancelled) {
+				setEventAttendees(Object.fromEntries(attendeeEntries));
+			}
+		};
+
+		void loadEventAttendees();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [membershipStatus, workspace.events]);
+
 	const handleJoinRequest = async () => {
 		if (!groupId) {
 			return;
@@ -310,8 +404,8 @@ export default function GroupDetailPage() {
 		}
 
 		const content = postDraft.trim();
-		if (!content) {
-			setPostError('Write something before posting to the group.');
+		if (!content && !postImageFile) {
+			setPostError('Write something or choose an image before posting to the group.');
 			return;
 		}
 
@@ -320,20 +414,296 @@ export default function GroupDetailPage() {
 
 		try {
 			const createdPost = await feedAPI.createPost({
-				content,
+				content: content || undefined,
 				privacy: 'group',
 				group_id: groupId,
 			});
+
+			let uploadWarning: string | null = null;
+			if (postImageFile) {
+				try {
+					await feedAPI.uploadPostImage(createdPost.id, postImageFile);
+				} catch (err) {
+					uploadWarning =
+						err instanceof Error
+							? `Your post was created, but the image upload failed: ${err.message}`
+							: 'Your post was created, but the image upload failed.';
+				}
+			}
+
 			const hydratedPost = await feedAPI.getPost(createdPost.id);
 			setWorkspace((current) => ({
 				...current,
 				posts: [hydratedPost, ...current.posts],
 			}));
 			setPostDraft('');
+			setPostImageFile(null);
+			setPostImagePreviewUrl(null);
+			if (postImageInputRef.current) {
+				postImageInputRef.current.value = '';
+			}
+			if (uploadWarning) {
+				setPostError(uploadWarning);
+			}
 		} catch (err) {
 			setPostError(err instanceof Error ? err.message : 'Failed to create group post');
 		} finally {
 			setPostSubmitting(false);
+		}
+	};
+
+	const setCommentThreadState = (
+		postId: string,
+		updater: (current: CommentThreadState) => CommentThreadState
+	) => {
+		setCommentThreads((current) => ({
+			...current,
+			[postId]: updater(current[postId] ?? getInitialCommentThreadState()),
+		}));
+	};
+
+	const loadComments = async (postId: string) => {
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			loading: true,
+			error: null,
+		}));
+
+		try {
+			const items = await feedAPI.getComments(postId);
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				items,
+				loading: false,
+				error: null,
+				loaded: true,
+			}));
+		} catch (err) {
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				loading: false,
+				error: err instanceof Error ? err.message : 'Failed to load comments',
+				loaded: current.loaded,
+			}));
+		}
+	};
+
+	const toggleComments = async (postId: string) => {
+		const thread = commentThreads[postId] ?? getInitialCommentThreadState();
+		const nextOpen = !thread.open;
+
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			open: nextOpen,
+		}));
+
+		if (nextOpen && !thread.loaded && !thread.loading) {
+			await loadComments(postId);
+		}
+	};
+
+	const handleCommentDraftChange = (postId: string, value: string) => {
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			draft: value,
+			error: null,
+		}));
+	};
+
+	const handleCommentImageSelection = (postId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+		const nextFile = event.target.files?.[0] ?? null;
+		const nextPreviewUrl = nextFile ? URL.createObjectURL(nextFile) : null;
+
+		setCommentThreadState(postId, (current) => {
+			if (current.draftImagePreviewUrl) {
+				URL.revokeObjectURL(current.draftImagePreviewUrl);
+			}
+
+			return {
+				...current,
+				draftImageFile: nextFile,
+				draftImagePreviewUrl: nextPreviewUrl,
+				error: null,
+			};
+		});
+
+		event.target.value = '';
+	};
+
+	const clearCommentImage = (postId: string) => {
+		setCommentThreadState(postId, (current) => {
+			if (current.draftImagePreviewUrl) {
+				URL.revokeObjectURL(current.draftImagePreviewUrl);
+			}
+
+			return {
+				...current,
+				draftImageFile: null,
+				draftImagePreviewUrl: null,
+			};
+		});
+	};
+
+	const toggleReplyComposer = (postId: string, parentCommentId: string) => {
+		setCommentThreadState(postId, (current) => {
+			const isClosing = current.replyParentId === parentCommentId;
+			if (isClosing && current.replyImagePreviewUrl) {
+				URL.revokeObjectURL(current.replyImagePreviewUrl);
+			}
+
+			return {
+				...current,
+				replyParentId: isClosing ? null : parentCommentId,
+				replyDraft: isClosing ? '' : current.replyDraft,
+				replyImageFile: isClosing ? null : current.replyImageFile,
+				replyImagePreviewUrl: isClosing ? null : current.replyImagePreviewUrl,
+				error: null,
+			};
+		});
+	};
+
+	const handleReplyDraftChange = (postId: string, value: string) => {
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			replyDraft: value,
+			error: null,
+		}));
+	};
+
+	const handleReplyImageSelection = (postId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+		const nextFile = event.target.files?.[0] ?? null;
+		const nextPreviewUrl = nextFile ? URL.createObjectURL(nextFile) : null;
+
+		setCommentThreadState(postId, (current) => {
+			if (current.replyImagePreviewUrl) {
+				URL.revokeObjectURL(current.replyImagePreviewUrl);
+			}
+
+			return {
+				...current,
+				replyImageFile: nextFile,
+				replyImagePreviewUrl: nextPreviewUrl,
+				error: null,
+			};
+		});
+
+		event.target.value = '';
+	};
+
+	const clearReplyImage = (postId: string) => {
+		setCommentThreadState(postId, (current) => {
+			if (current.replyImagePreviewUrl) {
+				URL.revokeObjectURL(current.replyImagePreviewUrl);
+			}
+
+			return {
+				...current,
+				replyImageFile: null,
+				replyImagePreviewUrl: null,
+			};
+		});
+	};
+
+	const handleCreateComment = async (postId: string) => {
+		const thread = commentThreads[postId] ?? getInitialCommentThreadState();
+		const trimmedDraft = thread.draft.trim();
+
+		if (!trimmedDraft && !thread.draftImageFile) {
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				error: 'Write a comment before posting.',
+			}));
+			return;
+		}
+
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			submitting: true,
+			error: null,
+		}));
+
+		try {
+			const createdComment = await feedAPI.createComment(postId, {
+				content: trimmedDraft,
+			});
+
+			if (thread.draftImageFile) {
+				await feedAPI.uploadCommentImage(createdComment.id, thread.draftImageFile);
+			}
+
+			const items = await feedAPI.getComments(postId);
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				items,
+				draft: '',
+				draftImageFile: null,
+				draftImagePreviewUrl: null,
+				submitting: false,
+				replyParentId: null,
+				replyDraft: '',
+				replyImageFile: null,
+				replyImagePreviewUrl: null,
+				replySubmitting: false,
+				error: null,
+				loaded: true,
+				open: true,
+			}));
+		} catch (err) {
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				submitting: false,
+				error: err instanceof Error ? err.message : 'Failed to post comment',
+			}));
+		}
+	};
+
+	const handleCreateReply = async (postId: string, parentCommentId: string) => {
+		const thread = commentThreads[postId] ?? getInitialCommentThreadState();
+		const trimmedDraft = thread.replyDraft.trim();
+
+		if (!trimmedDraft && !thread.replyImageFile) {
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				error: 'Write a reply before posting.',
+			}));
+			return;
+		}
+
+		setCommentThreadState(postId, (current) => ({
+			...current,
+			replySubmitting: true,
+			error: null,
+		}));
+
+		try {
+			const createdReply = await feedAPI.createComment(postId, {
+				content: trimmedDraft,
+				parent_comment_id: parentCommentId,
+			});
+
+			if (thread.replyImageFile) {
+				await feedAPI.uploadCommentImage(createdReply.id, thread.replyImageFile);
+			}
+
+			const items = await feedAPI.getComments(postId);
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				items,
+				replyParentId: null,
+				replyDraft: '',
+				replyImageFile: null,
+				replyImagePreviewUrl: null,
+				replySubmitting: false,
+				error: null,
+				loaded: true,
+				open: true,
+			}));
+		} catch (err) {
+			setCommentThreadState(postId, (current) => ({
+				...current,
+				replySubmitting: false,
+				error: err instanceof Error ? err.message : 'Failed to post reply',
+			}));
 		}
 	};
 
@@ -414,15 +784,33 @@ export default function GroupDetailPage() {
 				description: eventDescription.trim(),
 				event_date: new Date(eventDate).toISOString(),
 			});
+			if (eventCreateStatus) {
+				await groupAPI.rsvpEvent(createdEvent.id, eventCreateStatus);
+			}
 			setWorkspace((current) => ({
 				...current,
 				events: [createdEvent, ...current.events].sort(
 					(a, b) => new Date(a.event_date).getTime() - new Date(b.event_date).getTime()
 				),
 			}));
+			if (eventCreateStatus === 'going' && currentUser) {
+				setEventAttendees((current) => ({
+					...current,
+					[createdEvent.id]: [currentUser],
+				}));
+			} else {
+				setEventAttendees((current) => ({
+					...current,
+					[createdEvent.id]: [],
+				}));
+			}
+			if (eventCreateStatus) {
+				setEventResponses((current) => ({ ...current, [createdEvent.id]: eventCreateStatus }));
+			}
 			setEventTitle('');
 			setEventDescription('');
 			setEventDate('');
+			setEventCreateStatus('going');
 			setEventFormOpen(false);
 		} catch (err) {
 			setEventError(err instanceof Error ? err.message : 'Failed to create event');
@@ -471,6 +859,11 @@ export default function GroupDetailPage() {
 		try {
 			await groupAPI.rsvpEvent(eventId, status);
 			setEventResponses((current) => ({ ...current, [eventId]: status }));
+			const attendees = await groupAPI.getEventAttendees(eventId);
+			setEventAttendees((current) => ({
+				...current,
+				[eventId]: Array.isArray(attendees) ? attendees : [],
+			}));
 		} catch (err) {
 			setEventError(err instanceof Error ? err.message : 'Failed to update RSVP');
 		}
@@ -543,6 +936,19 @@ export default function GroupDetailPage() {
 							<UnavailableState description={postsError} />
 						) : (
 							<>
+								<input
+									ref={postImageInputRef}
+									type="file"
+									accept="image/*"
+									className="hidden"
+									onChange={(event) => {
+										const nextFile = event.target.files?.[0] ?? null;
+										setPostImageFile(nextFile);
+										if (nextFile) {
+											setPostError(null);
+										}
+									}}
+								/>
 								<form className="rounded-xl border border-gray-100 bg-white p-4" onSubmit={handleCreatePost}>
 									<div className="flex gap-3">
 										{renderAvatar(currentUser ?? undefined)}
@@ -554,12 +960,62 @@ export default function GroupDetailPage() {
 												rows={3}
 												className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
 											/>
+											{postImagePreviewUrl ? (
+												<div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+													<div className="mb-3 flex items-start justify-between gap-3">
+														<div>
+															<p className="text-sm font-semibold text-gray-800">Selected image</p>
+															<p className="text-xs text-gray-500">{postImageFile?.name}</p>
+														</div>
+														<Button
+															type="button"
+															variant="ghost"
+															size="sm"
+															className="w-9 rounded-full p-0 text-gray-500"
+															onClick={() => {
+																setPostImageFile(null);
+																setPostImagePreviewUrl(null);
+																if (postImageInputRef.current) {
+																	postImageInputRef.current.value = '';
+																}
+															}}
+															disabled={postSubmitting}
+														>
+															<X className="h-4 w-4" />
+														</Button>
+													</div>
+													<Image
+														src={postImagePreviewUrl}
+														alt="Selected group post preview"
+														unoptimized
+														width={1200}
+														height={900}
+														className="w-full max-h-80 rounded-xl border border-gray-100 object-cover"
+													/>
+												</div>
+											) : null}
 											<div className="flex flex-wrap items-center justify-between gap-3">
-												{postError ? <p className="text-sm text-rose-600">{postError}</p> : <span />}
-												<Button type="submit" disabled={postSubmitting}>
-													{postSubmitting ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-													Post
-												</Button>
+												{postError ? (
+													<p className="text-sm text-rose-600">{postError}</p>
+												) : (
+													<span className="text-xs text-gray-500">Group posts can include images and comments.</span>
+												)}
+												<div className="flex items-center gap-2">
+													<Button
+														type="button"
+														variant="ghost"
+														size="sm"
+														onClick={() => postImageInputRef.current?.click()}
+														disabled={postSubmitting}
+													>
+														<ImageIcon className="mr-2 h-4 w-4 text-gray-400" />
+														Add Image
+													</Button>
+													<Button type="submit" disabled={postSubmitting}>
+														{postSubmitting ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+														Post
+													</Button>
+												</div>
 											</div>
 										</div>
 									</div>
@@ -567,7 +1023,22 @@ export default function GroupDetailPage() {
 
 								{workspace.posts.length > 0 ? (
 									workspace.posts.map((post) => (
-										<GroupPostCard key={post.id} post={post} />
+										<GroupPostCard
+											key={post.id}
+											post={post}
+											currentUser={currentUser}
+											thread={commentThreads[post.id] ?? getInitialCommentThreadState()}
+											onToggleComments={() => void toggleComments(post.id)}
+											onCommentDraftChange={(value) => handleCommentDraftChange(post.id, value)}
+											onCommentImageSelection={(event) => handleCommentImageSelection(post.id, event)}
+											onClearCommentImage={() => clearCommentImage(post.id)}
+											onCreateComment={() => void handleCreateComment(post.id)}
+											onToggleReplyComposer={(parentCommentId) => toggleReplyComposer(post.id, parentCommentId)}
+											onReplyDraftChange={(value) => handleReplyDraftChange(post.id, value)}
+											onReplyImageSelection={(event) => handleReplyImageSelection(post.id, event)}
+											onClearReplyImage={() => clearReplyImage(post.id)}
+											onCreateReply={(parentCommentId) => void handleCreateReply(post.id, parentCommentId)}
+										/>
 									))
 								) : (
 									<EmptyState title="No posts yet" />
@@ -681,6 +1152,30 @@ export default function GroupDetailPage() {
 												className="w-full rounded-bento border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary"
 											/>
 										</div>
+										<div className="space-y-2">
+											<label className="ml-1 text-sm font-medium text-gray-700">Your RSVP</label>
+											<div className="flex flex-wrap gap-2">
+												<Button
+													type="button"
+													size="sm"
+													variant={eventCreateStatus === 'going' ? 'primary' : 'secondary'}
+													onClick={() => setEventCreateStatus('going')}
+												>
+													Going
+												</Button>
+												<Button
+													type="button"
+													size="sm"
+													variant={eventCreateStatus === 'not_going' ? 'danger' : 'ghost'}
+													onClick={() => setEventCreateStatus('not_going')}
+												>
+													Not going
+												</Button>
+											</div>
+											<p className="ml-1 text-xs text-gray-500">
+												This is saved immediately after the event is created, and you can still change it later.
+											</p>
+										</div>
 										{eventError ? <p className="text-sm text-rose-600">{eventError}</p> : null}
 										<Button type="submit" disabled={eventSubmitting}>
 											{eventSubmitting ? <Loader className="mr-2 h-4 w-4 animate-spin" /> : <CalendarPlus className="mr-2 h-4 w-4" />}
@@ -715,6 +1210,30 @@ export default function GroupDetailPage() {
 													>
 														Not going
 													</Button>
+												</div>
+												<div className="mt-4 rounded-[18px] border border-gray-100 bg-white/80 p-3">
+													<p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+														Going
+													</p>
+													{(eventAttendees[event.id] ?? []).length > 0 ? (
+														<div className="mt-3 space-y-2">
+															{(eventAttendees[event.id] ?? []).map((attendee) => (
+																<div key={attendee.id} className="flex items-center gap-3">
+																	{renderAvatar(attendee)}
+																	<div className="min-w-0">
+																		<p className="truncate text-sm font-semibold text-gray-900">
+																			{attendee.first_name} {attendee.last_name}
+																		</p>
+																		<p className="truncate text-xs text-gray-500">
+																			{attendee.nickname || attendee.id}
+																		</p>
+																	</div>
+																</div>
+															))}
+														</div>
+													) : (
+														<p className="mt-2 text-sm text-gray-500">No one has said they&apos;re going yet.</p>
+													)}
 												</div>
 											</div>
 										))
@@ -904,8 +1423,182 @@ function TabButton({
 	);
 }
 
-function GroupPostCard({ post }: { post: PostResponse }) {
+function GroupPostCard({
+	post,
+	currentUser,
+	thread,
+	onToggleComments,
+	onCommentDraftChange,
+	onCommentImageSelection,
+	onClearCommentImage,
+	onCreateComment,
+	onToggleReplyComposer,
+	onReplyDraftChange,
+	onReplyImageSelection,
+	onClearReplyImage,
+	onCreateReply,
+}: {
+	post: PostResponse;
+	currentUser: PublicUser | null;
+	thread: CommentThreadState;
+	onToggleComments: () => void;
+	onCommentDraftChange: (value: string) => void;
+	onCommentImageSelection: (event: React.ChangeEvent<HTMLInputElement>) => void;
+	onClearCommentImage: () => void;
+	onCreateComment: () => void;
+	onToggleReplyComposer: (parentCommentId: string) => void;
+	onReplyDraftChange: (value: string) => void;
+	onReplyImageSelection: (event: React.ChangeEvent<HTMLInputElement>) => void;
+	onClearReplyImage: () => void;
+	onCreateReply: (parentCommentId: string) => void;
+}) {
 	const postImageUrl = resolveAssetUrl(post.image_url);
+	const commentCount = countComments(thread.items);
+	const commentLabel =
+		thread.loaded && commentCount > 0
+			? `${commentCount} comment${commentCount === 1 ? '' : 's'}`
+			: 'Comment';
+
+	const renderCommentNode = (comment: CommentResponse) => {
+		const commentImageUrl = resolveAssetUrl(comment.image_url);
+		const isReplyComposerOpen = thread.replyParentId === comment.id;
+
+		return (
+			<div key={comment.id} className="space-y-3">
+				<div className="flex gap-3">
+					{renderAvatar(comment.author)}
+					<div className="min-w-0 flex-1">
+						<div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+							<div className="mb-2 flex items-center justify-between gap-3">
+								<div className="min-w-0">
+									<p className="truncate text-sm font-semibold text-gray-800">
+										{comment.author.first_name} {comment.author.last_name}
+									</p>
+									<p className="text-xs text-gray-500">{formatDateTime(comment.created_at)}</p>
+								</div>
+							</div>
+
+							{comment.content ? (
+								<p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+									{comment.content}
+								</p>
+							) : null}
+
+							{commentImageUrl ? (
+								<Image
+									src={commentImageUrl}
+									alt="Comment image"
+									unoptimized
+									width={1200}
+									height={900}
+									className="mt-3 w-full max-h-72 rounded-xl border border-gray-100 bg-white object-cover"
+								/>
+							) : null}
+
+							<div className="mt-3">
+								<button
+									type="button"
+									onClick={() => onToggleReplyComposer(comment.id)}
+									className="text-xs font-semibold text-gray-500 transition-colors hover:text-indigo-600"
+									disabled={thread.replySubmitting}
+								>
+									Reply
+								</button>
+							</div>
+						</div>
+
+						{isReplyComposerOpen ? (
+							<div className="ml-4 mt-3 space-y-3 rounded-xl border border-gray-100 bg-white p-3">
+								<textarea
+									value={thread.replyDraft}
+									onChange={(event) => onReplyDraftChange(event.target.value)}
+									placeholder={`Reply to ${comment.author.first_name}...`}
+									rows={2}
+									className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+									disabled={thread.replySubmitting}
+								/>
+								{thread.replyImagePreviewUrl ? (
+									<div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+										<div className="mb-3 flex items-start justify-between gap-3">
+											<div>
+												<p className="text-sm font-semibold text-gray-800">Selected image</p>
+												<p className="text-xs text-gray-500">{thread.replyImageFile?.name}</p>
+											</div>
+											<Button
+												type="button"
+												variant="ghost"
+												size="sm"
+												className="w-9 rounded-full p-0 text-gray-500"
+												onClick={onClearReplyImage}
+												disabled={thread.replySubmitting}
+											>
+												<X className="h-4 w-4" />
+											</Button>
+										</div>
+										<Image
+											src={thread.replyImagePreviewUrl}
+											alt="Selected reply preview"
+											unoptimized
+											width={1200}
+											height={900}
+											className="w-full max-h-72 rounded-xl border border-gray-100 object-cover"
+										/>
+									</div>
+								) : null}
+								<div className="flex items-center justify-end gap-2">
+									<label className="inline-flex cursor-pointer items-center justify-center rounded-bento bg-transparent px-3 py-1.5 text-sm font-medium text-text-main transition-colors hover:bg-gray-100 focus-within:ring-2 focus-within:ring-primary">
+										<input
+											type="file"
+											accept="image/*"
+											className="hidden"
+											onChange={onReplyImageSelection}
+											disabled={thread.replySubmitting}
+										/>
+										<ImageIcon className="mr-2 h-4 w-4 text-gray-400" />
+										Add Image
+									</label>
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										className="rounded-full"
+										onClick={() => onToggleReplyComposer(comment.id)}
+										disabled={thread.replySubmitting}
+									>
+										Cancel
+									</Button>
+									<Button
+										type="button"
+										variant="primary"
+										size="sm"
+										className="rounded-full px-5"
+										onClick={() => onCreateReply(comment.id)}
+										disabled={thread.replySubmitting}
+									>
+										{thread.replySubmitting ? (
+											<>
+												<LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+												Replying...
+											</>
+										) : (
+											'Reply'
+										)}
+									</Button>
+								</div>
+							</div>
+						) : null}
+
+						{comment.replies.length > 0 ? (
+							<div className="ml-4 mt-3 space-y-3 border-l border-gray-200 pl-4">
+								{comment.replies.map((reply) => renderCommentNode(reply))}
+							</div>
+						) : null}
+					</div>
+				</div>
+			</div>
+		);
+	};
+
 	return (
 		<div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
 			<div className="p-4 flex items-center justify-between">
@@ -932,12 +1625,120 @@ function GroupPostCard({ post }: { post: PostResponse }) {
 				<div className="px-4 pb-4">
 					<Image
 						src={postImageUrl}
-						alt=""
+						alt="Group post image"
 						unoptimized
 						width={1200}
 						height={900}
 						className="w-full max-h-[32rem] rounded-xl border border-gray-100 object-cover bg-gray-50"
 					/>
+				</div>
+			) : null}
+
+			<div className="flex items-center gap-6 border-t border-gray-100 bg-gray-50/50 px-4 py-3">
+				<button
+					type="button"
+					onClick={onToggleComments}
+					className="flex items-center gap-2 text-xs font-bold text-gray-500 transition-colors hover:text-indigo-600"
+				>
+					<MessageCircle className="h-4 w-4" />
+					{commentLabel}
+				</button>
+			</div>
+
+			{thread.open ? (
+				<div className="space-y-4 border-t border-gray-100 bg-white px-4 py-4">
+					<div className="flex gap-3">
+						{renderAvatar(currentUser ?? undefined)}
+						<div className="flex-1 space-y-3">
+							<textarea
+								value={thread.draft}
+								onChange={(event) => onCommentDraftChange(event.target.value)}
+								placeholder="Write a comment..."
+								rows={3}
+								className="w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+								disabled={thread.submitting}
+							/>
+							{thread.draftImagePreviewUrl ? (
+								<div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+									<div className="mb-3 flex items-start justify-between gap-3">
+										<div>
+											<p className="text-sm font-semibold text-gray-800">Selected image</p>
+											<p className="text-xs text-gray-500">{thread.draftImageFile?.name}</p>
+										</div>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											className="w-9 rounded-full p-0 text-gray-500"
+											onClick={onClearCommentImage}
+											disabled={thread.submitting}
+										>
+											<X className="h-4 w-4" />
+										</Button>
+									</div>
+									<Image
+										src={thread.draftImagePreviewUrl}
+										alt="Selected comment preview"
+										unoptimized
+										width={1200}
+										height={900}
+										className="w-full max-h-72 rounded-xl border border-gray-100 object-cover"
+									/>
+								</div>
+							) : null}
+							<div className="flex items-center justify-between gap-3">
+								{thread.error ? (
+									<p className="text-sm text-red-600">{thread.error}</p>
+								) : (
+									<span className="text-xs text-gray-500">
+										Comments follow the post&apos;s visibility settings.
+									</span>
+								)}
+								<div className="flex items-center gap-2">
+									<label className="inline-flex cursor-pointer items-center justify-center rounded-bento bg-transparent px-3 py-1.5 text-sm font-medium text-text-main transition-colors hover:bg-gray-100 focus-within:ring-2 focus-within:ring-primary">
+										<input
+											type="file"
+											accept="image/*"
+											className="hidden"
+											onChange={onCommentImageSelection}
+											disabled={thread.submitting}
+										/>
+										<ImageIcon className="mr-2 h-4 w-4 text-gray-400" />
+										Add Image
+									</label>
+									<Button
+										type="button"
+										variant="primary"
+										size="sm"
+										className="rounded-full px-5"
+										onClick={onCreateComment}
+										disabled={thread.submitting}
+									>
+										{thread.submitting ? (
+											<>
+												<LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+												Posting...
+											</>
+										) : (
+											'Comment'
+										)}
+									</Button>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					{thread.loading && !thread.loaded ? (
+						<div className="flex items-center justify-center py-6">
+							<LoaderCircle className="h-5 w-5 animate-spin text-indigo-600" />
+						</div>
+					) : thread.loaded && thread.items.length === 0 ? (
+						<div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-6 text-center">
+							<p className="text-sm text-gray-500">No comments yet. Start the conversation.</p>
+						</div>
+					) : (
+						<div className="space-y-4">{thread.items.map((comment) => renderCommentNode(comment))}</div>
+					)}
 				</div>
 			) : null}
 		</div>

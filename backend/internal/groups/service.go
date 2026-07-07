@@ -13,7 +13,7 @@ import (
 
 type Service interface {
 	CreateGroup(userID string, req *models.CreateGroupRequest) (*models.Group, error)
-	GetGroups() ([]*models.Group, error)
+	GetGroups() ([]*models.GroupListResponse, error)
 	GetGroup(viewerID, id string) (*models.GroupDetailResponse, error)
 	GetMembers(viewerID, groupID string) ([]*models.PublicUser, error)
 	IsMember(groupID, userID string) (bool, error)
@@ -27,6 +27,7 @@ type Service interface {
 	CreateEvent(userID string, groupID string, req *models.CreateEventRequest) (*models.Event, error)
 	GetGroupEvents(groupID string) ([]*models.Event, error)
 	RSVPEvent(eventID, userID, status string) error
+	GetEventAttendees(viewerID, eventID string) ([]*models.PublicUser, error)
 }
 
 type NotificationService interface {
@@ -68,8 +69,30 @@ func (s *service) CreateGroup(userID string, req *models.CreateGroupRequest) (*m
 	return g, nil
 }
 
-func (s *service) GetGroups() ([]*models.Group, error) {
-	return s.groupRepo.GetGroups()
+func (s *service) GetGroups() ([]*models.GroupListResponse, error) {
+	groups, err := s.groupRepo.GetGroups()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*models.GroupListResponse, 0, len(groups))
+	for _, group := range groups {
+		creator, err := s.userRepo.GetUserByID(group.CreatorID)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, &models.GroupListResponse{
+			ID:          group.ID,
+			CreatorID:   group.CreatorID,
+			Title:       group.Title,
+			Description: group.Description,
+			CreatedAt:   group.CreatedAt,
+			Creator:     creator.ToPublic(),
+		})
+	}
+
+	return out, nil
 }
 
 func (s *service) GetGroup(viewerID, id string) (*models.GroupDetailResponse, error) {
@@ -335,6 +358,27 @@ func (s *service) RSVPEvent(eventID, userID, status string) error {
 
 	// Assuming user is a member of the group (validation skipped for brevity)
 	return s.groupRepo.CreateEventRSVP(eventID, userID, status)
+}
+
+func (s *service) GetEventAttendees(viewerID, eventID string) ([]*models.PublicUser, error) {
+	event, err := s.groupRepo.GetEventByID(eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	member, err := s.IsMember(event.GroupID, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	if !member {
+		return nil, apperror.Forbidden("only group members can view event attendees")
+	}
+
+	attendees, err := s.groupRepo.GetEventAttendees(eventID, "going")
+	if err != nil {
+		return nil, err
+	}
+	return toPublicUsers(attendees), nil
 }
 
 func (s *service) requireCreator(groupID, userID string) error {
