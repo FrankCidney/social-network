@@ -1,0 +1,1 @@
+-- SQLite down migration intentionally left as a no-op for additive column change.
