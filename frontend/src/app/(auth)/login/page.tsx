@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { authAPI, LoginPayload } from '@/lib/api';
 
-export default function LoginPage() {
+function LoginForm() {
 	const router = useRouter();
 	const searchParams = useSearchParams();
 	const nextPath = searchParams.get('next') || '/feed';
@@ -108,5 +108,13 @@ export default function LoginPage() {
 				</Link>
 			</div>
 		</div>
+	);
+}
+
+export default function LoginPage() {
+	return (
+		<React.Suspense fallback={<div className="text-sm text-gray-500">Loading…</div>}>
+			<LoginForm />
+		</React.Suspense>
 	);
 }
