@@ -263,6 +263,7 @@ export type GroupMessage = {
 	group_id?: string;
 	content: string;
 	created_at: string;
+	author?: PublicUser;
 };
 
 export const authAPI = {
@@ -533,10 +534,12 @@ export function resolveAssetUrl(path?: string) {
 export type ChatMessage = {
 	id: string;
 	sender_id: string;
-	receiver_id: string;
+	receiver_id?: string;
+	group_id?: string;
 	content: string;
 	created_at: string;
 	read_at?: string;
+	author?: PublicUser;
 };
 
 export type ChatConversation = {

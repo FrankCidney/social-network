@@ -226,6 +226,48 @@ func TestSendFollowRequest(t *testing.T) {
 	}
 }
 
+func TestSendFollowRequest_AfterAcceptedAndUnfollow_ReopensRequest(t *testing.T) {
+	const (
+		senderID = "sender-123"
+		targetID = "target-456"
+	)
+
+	db := setupTestDB(t)
+	users := repository.NewUserRepository(db)
+	follows := repository.NewFollowRepository(db)
+
+	if err := users.CreateUser(&models.User{ID: senderID, Email: "sender@example.com"}); err != nil {
+		t.Fatalf("create sender: %v", err)
+	}
+	if err := users.CreateUser(&models.User{ID: targetID, Email: "target@example.com", IsPublic: false}); err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+
+	svc := NewService(users, follows, nil)
+
+	if err := svc.SendFollowRequest(senderID, targetID); err != nil {
+		t.Fatalf("initial send follow request: %v", err)
+	}
+	if err := svc.AcceptRequest(targetID, senderID); err != nil {
+		t.Fatalf("accept follow request: %v", err)
+	}
+	if err := svc.Unfollow(senderID, targetID); err != nil {
+		t.Fatalf("unfollow: %v", err)
+	}
+
+	if err := svc.SendFollowRequest(senderID, targetID); err != nil {
+		t.Fatalf("re-send follow request after unfollow: %v", err)
+	}
+
+	request, err := follows.GetFollowRequest(senderID, targetID)
+	if err != nil {
+		t.Fatalf("get follow request: %v", err)
+	}
+	if request.Status != "pending" {
+		t.Fatalf("expected reopened request to be pending, got %q", request.Status)
+	}
+}
+
 func TestAcceptRequest(t *testing.T) {
 	const (
 		senderID    = "sender-123"

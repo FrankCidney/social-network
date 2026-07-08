@@ -34,14 +34,26 @@ func NewFollowRepository(db *sql.DB) FollowRepository {
 func (r *sqliteFollowRepo) CreateFollowRequest(senderID, targetID string) error {
 	const query = `
 		INSERT INTO follow_requests (sender_id, receiver_id, status, created_at)
-		VALUES (?, ?, 'pending', datetime('now'))`
- 
-	_, err := r.db.Exec(query, senderID, targetID)
+		VALUES (?, ?, 'pending', datetime('now'))
+		ON CONFLICT(sender_id, receiver_id) DO UPDATE SET
+			status = 'pending',
+			created_at = datetime('now')
+		WHERE follow_requests.status != 'pending'`
+
+	res, err := r.db.Exec(query, senderID, targetID)
 	if err != nil {
 		if isSQLiteUniqueViolation(err) {
 			return apperror.Conflict("follow request already exists")
 		}
 		return fmt.Errorf("create follow request: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("follow request rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return apperror.Conflict("follow request already exists")
 	}
 	return nil
 }
@@ -50,7 +62,7 @@ func (r *sqliteFollowRepo) GetFollowRequest(senderID, targetID string) (*models.
 	const query = `
 		SELECT sender_id, receiver_id, status, created_at
 		FROM follow_requests WHERE sender_id = ? AND receiver_id = ?`
- 
+
 	fr := &models.FollowRequest{}
 	err := r.db.QueryRow(query, senderID, targetID).Scan(
 		&fr.SenderID, &fr.ReceiverID, &fr.Status, &fr.CreatedAt,
@@ -71,11 +83,11 @@ func (r *sqliteFollowRepo) AcceptFollowRequest(senderID, targetID string) error 
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
- 
+
 	const updateReq = `
 		UPDATE follow_requests SET status = 'accepted'
 		WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'`
- 
+
 	res, err := tx.Exec(updateReq, senderID, targetID)
 	if err != nil {
 		return fmt.Errorf("accept follow request update: %w", err)
@@ -85,17 +97,17 @@ func (r *sqliteFollowRepo) AcceptFollowRequest(senderID, targetID string) error 
 		// Either the request doesn't exist or it's already accepted/declined.
 		return apperror.NotFound("pending follow request not found")
 	}
- 
+
 	// "IGNORE" is used for idempotency, so as to not throw an error if a user say clicks
 	// "Accept Follow Request" several times in quick succession
 	const insertFollower = `
 		INSERT OR IGNORE INTO followers (follower_id, followed_id, created_at)
 		VALUES (?, ?, datetime('now'))`
- 
+
 	if _, err = tx.Exec(insertFollower, senderID, targetID); err != nil {
 		return fmt.Errorf("insert follower on accept: %w", err)
 	}
- 
+
 	return tx.Commit()
 }
 
@@ -103,21 +115,21 @@ func (r *sqliteFollowRepo) DeclineFollowRequest(senderID, targetID string) error
 	const query = `
 		DELETE FROM follow_requests
 		WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'`
- 
+
 	res, err := r.db.Exec(query, senderID, targetID)
 	if err != nil {
 		return fmt.Errorf("decline follow request: %w", err)
 	}
 	return requireOneRow(res, "pending follow request")
 }
- 
+
 func (r *sqliteFollowRepo) CreateFollower(followerID, followedID string) error {
 	// "IGNORE" is used for idempotency, so as to not error should a user click follow
 	// multiple times in quick succession
 	const query = `
 		INSERT OR IGNORE INTO followers (follower_id, followed_id, created_at)
 		VALUES (?, ?, datetime('now'))`
- 
+
 	_, err := r.db.Exec(query, followerID, followedID)
 	if err != nil {
 		return fmt.Errorf("create follower: %w", err)
@@ -139,7 +151,7 @@ func (r *sqliteFollowRepo) IsFollowing(followerID, followedID string) (bool, err
 		SELECT EXISTS(
 			SELECT 1 FROM followers WHERE follower_id = ? AND followed_id = ?
 		)`
- 
+
 	var exists bool
 	err := r.db.QueryRow(query, followerID, followedID).Scan(&exists)
 	if err != nil {
@@ -158,7 +170,7 @@ func (r *sqliteFollowRepo) GetFollowers(userID string, limit, offset int) ([]*mo
 		WHERE f.followed_id = ?
 		ORDER BY f.created_at DESC
 		LIMIT ? OFFSET ?`
- 
+
 	return r.scanUsers(query, userID, limit, offset)
 }
 
@@ -172,14 +184,14 @@ func (r *sqliteFollowRepo) GetFollowing(userID string, limit, offset int) ([]*mo
 		WHERE f.follower_id = ?
 		ORDER BY f.created_at DESC
 		LIMIT ? OFFSET ?`
- 
+
 	return r.scanUsers(query, userID, limit, offset)
 }
 
 func (r *sqliteFollowRepo) GetFollowerCount(userID string) (int, error) {
 	return r.countWhere("followers", "followed_id", userID)
 }
- 
+
 func (r *sqliteFollowRepo) GetFollowingCount(userID string) (int, error) {
 	return r.countWhere("followers", "follower_id", userID)
 }
@@ -190,13 +202,13 @@ func (r *sqliteFollowRepo) GetPendingRequests(userID string) ([]*models.FollowRe
 		FROM follow_requests
 		WHERE receiver_id = ? AND status = 'pending'
 		ORDER BY created_at DESC`
- 
+
 	rows, err := r.db.Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get pending requests: %w", err)
 	}
 	defer rows.Close()
- 
+
 	var requests []*models.FollowRequest
 	for rows.Next() {
 		fr := &models.FollowRequest{}
@@ -217,7 +229,7 @@ func (r *sqliteFollowRepo) scanUsers(query, userID string, limit, offset int) ([
 		return nil, fmt.Errorf("query users: %w", err)
 	}
 	defer rows.Close()
- 
+
 	var users []*models.User
 	for rows.Next() {
 		u := &models.User{}

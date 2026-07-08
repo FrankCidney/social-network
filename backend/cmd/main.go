@@ -62,7 +62,7 @@ func main() {
 	userService := user.NewService(userRepo, followRepo, postRepo)
 	followService := follow.NewService(userRepo, followRepo, notificationService)
 	groupService := groups.NewService(groupRepo, userRepo, notificationService)
-	chatService := chat.NewService(msgRepo, groupRepo, followRepo, wsNotifier)
+	chatService := chat.NewService(msgRepo, userRepo, groupRepo, followRepo, wsNotifier)
 	postService := post.NewService(postRepo, userRepo, followRepo, groupService)
 	commentService := comment.NewService(commentRepo, userRepo, postService)
 

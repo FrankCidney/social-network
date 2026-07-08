@@ -30,14 +30,16 @@ type Service interface {
 
 type service struct {
 	msgRepo    repository.MessageRepository
+	userRepo   repository.UserRepository
 	groupRepo  repository.GroupRepository  // for validating group membership
 	followRepo repository.FollowRepository // for validating follow status
 	notifier   websocket.Notifier
 }
 
-func NewService(msgRepo repository.MessageRepository, groupRepo repository.GroupRepository, followRepo repository.FollowRepository, notifier websocket.Notifier) Service {
+func NewService(msgRepo repository.MessageRepository, userRepo repository.UserRepository, groupRepo repository.GroupRepository, followRepo repository.FollowRepository, notifier websocket.Notifier) Service {
 	return &service{
 		msgRepo:    msgRepo,
+		userRepo:   userRepo,
 		groupRepo:  groupRepo,
 		followRepo: followRepo,
 		notifier:   notifier,
@@ -92,6 +94,10 @@ func (s *service) SendMessage(senderID string, req *SendMessageRequest) (*models
 		return nil, fmt.Errorf("create message: %w", err)
 	}
 
+	if err := s.attachAuthor(m); err != nil {
+		return nil, err
+	}
+
 	// Broadcast via WebSocket
 	if s.notifier != nil {
 		if m.ReceiverID != nil {
@@ -129,7 +135,16 @@ func (s *service) GetGroupMessages(userID, groupID string, limit, offset int) ([
 		return nil, apperror.Forbidden("must be a group member to view messages")
 	}
 
-	return s.msgRepo.GetGroupMessages(groupID, limit, offset)
+	messages, err := s.msgRepo.GetGroupMessages(groupID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		if err := s.attachAuthor(message); err != nil {
+			return nil, err
+		}
+	}
+	return messages, nil
 }
 
 func (s *service) GetConversations(userID string) ([]*models.Conversation, error) {
@@ -138,4 +153,13 @@ func (s *service) GetConversations(userID string) ([]*models.Conversation, error
 
 func (s *service) MarkConversationRead(userID, otherUserID string) error {
 	return s.msgRepo.MarkConversationRead(userID, otherUserID)
+}
+
+func (s *service) attachAuthor(message *models.Message) error {
+	user, err := s.userRepo.GetUserByID(message.SenderID)
+	if err != nil {
+		return fmt.Errorf("get message author: %w", err)
+	}
+	message.Author = user.ToPublic()
+	return nil
 }

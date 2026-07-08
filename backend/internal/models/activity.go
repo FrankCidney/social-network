@@ -4,14 +4,14 @@ import "time"
 
 // Message represents a direct or group message
 type Message struct {
-	ID         string     `json:"id"`
-	SenderID   string     `json:"sender_id"`
-	ReceiverID *string    `json:"receiver_id,omitempty"` // Nullable for group chat
-	GroupID    *string    `json:"group_id,omitempty"`    // Nullable for private chat
-	Content    string     `json:"content"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ReadAt     *time.Time `json:"read_at,omitempty"`
-	Author     *User      `json:"author,omitempty"`
+	ID         string      `json:"id"`
+	SenderID   string      `json:"sender_id"`
+	ReceiverID *string     `json:"receiver_id,omitempty"` // Nullable for group chat
+	GroupID    *string     `json:"group_id,omitempty"`    // Nullable for private chat
+	Content    string      `json:"content"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ReadAt     *time.Time  `json:"read_at,omitempty"`
+	Author     *PublicUser `json:"author,omitempty"`
 }
 
 // Notification represents a user notification

@@ -20,6 +20,7 @@ import {
 import { EmojiPicker } from '@/components/chat/EmojiPicker';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
 	type GroupDetail,
 	type GroupEvent,
@@ -98,6 +99,7 @@ function countComments(items: CommentResponse[]): number {
 
 export default function GroupDetailPage() {
 	const params = useParams<{ id: string }>();
+	const { socket } = useWebSocket();
 	const groupId = Array.isArray(params.id) ? params.id[0] : params.id;
 	const [workspace, setWorkspace] = React.useState<GroupWorkspaceState>(INITIAL_STATE);
 	const [loading, setLoading] = React.useState(true);
@@ -205,6 +207,33 @@ export default function GroupDetailPage() {
 	const membershipStatus = group?.membership_status ?? 'none';
 	const canInvite = membershipStatus === 'accepted' || isCreator;
 	const canModerateRequests = isCreator;
+
+	React.useEffect(() => {
+		if (!socket || !groupId) {
+			return;
+		}
+
+		const handleMessage = (event: MessageEvent) => {
+			let data: { type?: string; payload?: GroupMessage };
+			try {
+				data = JSON.parse(event.data);
+			} catch {
+				return;
+			}
+			if (data.type !== 'chat_message' || !data.payload?.group_id || data.payload.group_id !== groupId) {
+				return;
+			}
+
+			const incoming = data.payload;
+			setWorkspace((current) => ({
+				...current,
+				messages: mergeGroupMessages(current.messages, incoming),
+			}));
+		};
+
+		socket.addEventListener('message', handleMessage);
+		return () => socket.removeEventListener('message', handleMessage);
+	}, [socket, groupId]);
 
 	React.useEffect(() => {
 		if (!postImageFile) {
@@ -719,6 +748,20 @@ export default function GroupDetailPage() {
 			return;
 		}
 
+		const optimisticMessage: GroupMessage = {
+			id: `temp-${Date.now()}`,
+			sender_id: currentUser?.id ?? 'me',
+			group_id: groupId,
+			content,
+			created_at: new Date().toISOString(),
+			author: currentUser ?? undefined,
+		};
+
+		setWorkspace((current) => ({
+			...current,
+			messages: [...current.messages, optimisticMessage],
+		}));
+		setMessageDraft('');
 		setMessageSubmitting(true);
 		setMessagesError(null);
 
@@ -729,19 +772,21 @@ export default function GroupDetailPage() {
 			});
 			setWorkspace((current) => ({
 				...current,
-				messages: [
-					...current.messages,
-					{
-						id: sentMessage.id,
-						sender_id: sentMessage.sender_id,
-						group_id: groupId,
-						content: sentMessage.content,
-						created_at: sentMessage.created_at,
-					},
-				],
+				messages: replaceOptimisticGroupMessage(current.messages, optimisticMessage.id, {
+					id: sentMessage.id,
+					sender_id: sentMessage.sender_id,
+					group_id: sentMessage.group_id ?? groupId,
+					content: sentMessage.content,
+					created_at: sentMessage.created_at,
+					author: sentMessage.author ?? currentUser ?? undefined,
+				}),
 			}));
-			setMessageDraft('');
 		} catch (err) {
+			setWorkspace((current) => ({
+				...current,
+				messages: current.messages.filter((message) => message.id !== optimisticMessage.id),
+			}));
+			setMessageDraft(content);
 			setMessagesError(err instanceof Error ? err.message : 'Failed to send group message');
 		} finally {
 			setMessageSubmitting(false);
@@ -1074,7 +1119,7 @@ export default function GroupDetailPage() {
 														}`}
 													>
 														<p className={`text-xs font-semibold ${isOwnMessage ? 'text-indigo-100' : 'text-gray-500'}`}>
-															{isOwnMessage ? 'You' : 'Member'}
+															{isOwnMessage ? 'You' : getGroupMessageSenderLabel(message)}
 														</p>
 														<p className="mt-1 whitespace-pre-wrap leading-6">{message.content}</p>
 														<p className={`mt-2 text-[11px] ${isOwnMessage ? 'text-indigo-100' : 'text-gray-400'}`}>
@@ -1786,4 +1831,41 @@ function formatDateTime(value: string) {
 		hour: 'numeric',
 		minute: '2-digit',
 	}).format(date);
+}
+
+function getGroupMessageSenderLabel(message: GroupMessage) {
+	if (message.author?.nickname) {
+		return message.author.nickname;
+	}
+	if (message.author) {
+		return `${message.author.first_name} ${message.author.last_name}`.trim();
+	}
+	return message.sender_id;
+}
+
+function mergeGroupMessages(messages: GroupMessage[], incoming: GroupMessage) {
+	if (messages.some((message) => message.id === incoming.id)) {
+		return messages;
+	}
+
+	const optimisticIndex = messages.findIndex(
+		(message) =>
+			message.id.startsWith('temp-') &&
+			message.sender_id === incoming.sender_id &&
+			message.group_id === incoming.group_id &&
+			message.content === incoming.content
+	);
+
+	if (optimisticIndex === -1) {
+		return [...messages, incoming];
+	}
+
+	return messages.map((message, index) => (index === optimisticIndex ? incoming : message));
+}
+
+function replaceOptimisticGroupMessage(messages: GroupMessage[], optimisticId: string, saved: GroupMessage) {
+	const replaced = messages.map((message) => (message.id === optimisticId ? saved : message));
+	return replaced.filter(
+		(message, index, current) => current.findIndex((candidate) => candidate.id === message.id) === index
+	);
 }
