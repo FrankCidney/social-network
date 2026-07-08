@@ -17,8 +17,10 @@ type GroupRepository interface {
 	GetGroupMembersByStatus(groupID, status string) ([]*models.User, error)
 	GetGroupMemberStatus(groupID, userID string) (string, error)
 	CreateEvent(event *models.Event) error
+	GetEventByID(id string) (*models.Event, error)
 	GetGroupEvents(groupID string) ([]*models.Event, error)
 	CreateEventRSVP(eventID, userID, status string) error
+	GetEventAttendees(eventID, status string) ([]*models.User, error)
 }
 
 type sqliteGroupRepo struct {
@@ -167,6 +169,19 @@ func (r *sqliteGroupRepo) GetGroupEvents(groupID string) ([]*models.Event, error
 	return events, nil
 }
 
+func (r *sqliteGroupRepo) GetEventByID(id string) (*models.Event, error) {
+	const query = `SELECT id, group_id, creator_id, title, description, event_date, created_at FROM events WHERE id = ?`
+	e := &models.Event{}
+	err := r.db.QueryRow(query, id).Scan(&e.ID, &e.GroupID, &e.CreatorID, &e.Title, &e.Description, &e.EventDate, &e.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.NotFound("event not found")
+		}
+		return nil, fmt.Errorf("get event by id: %w", err)
+	}
+	return e, nil
+}
+
 func (r *sqliteGroupRepo) CreateEventRSVP(eventID, userID, status string) error {
 	const query = `
 		INSERT INTO event_rsvps (event_id, user_id, status, created_at)
@@ -177,4 +192,34 @@ func (r *sqliteGroupRepo) CreateEventRSVP(eventID, userID, status string) error 
 		return fmt.Errorf("create/update event rsvp: %w", err)
 	}
 	return nil
+}
+
+func (r *sqliteGroupRepo) GetEventAttendees(eventID, status string) ([]*models.User, error) {
+	const query = `
+		SELECT u.id, u.email, u.first_name, u.last_name, u.dob,
+		       COALESCE(u.nickname, ''), COALESCE(u.about_me, ''), COALESCE(u.avatar_path, ''),
+		       u.is_public, u.created_at
+		FROM event_rsvps er
+		JOIN users u ON u.id = er.user_id
+		WHERE er.event_id = ? AND er.status = ?
+		ORDER BY er.created_at DESC`
+
+	rows, err := r.db.Query(query, eventID, status)
+	if err != nil {
+		return nil, fmt.Errorf("get event attendees: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*models.User
+	for rows.Next() {
+		u := &models.User{}
+		if err := rows.Scan(
+			&u.ID, &u.Email, &u.FirstName, &u.LastName, &u.DOB,
+			&u.Nickname, &u.AboutMe, &u.AvatarPath, &u.IsPublic, &u.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan event attendee: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
 }

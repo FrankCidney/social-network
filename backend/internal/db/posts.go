@@ -63,7 +63,7 @@ func (s *SQLiteStore) CreateComment(ctx context.Context, comment *models.Comment
 // GetCommentsByPostID retrieves all comments for a specific post
 func (s *SQLiteStore) GetCommentsByPostID(ctx context.Context, postID string) ([]*models.Comment, error) {
 	query := `
-		SELECT id, post_id, user_id, content, image_url, created_at
+		SELECT id, post_id, user_id, COALESCE(content, ''), COALESCE(image_url, ''), created_at
 		FROM comments WHERE post_id = ? ORDER BY created_at ASC
 	`
 	rows, err := s.QueryContext(ctx, query, postID)

@@ -223,6 +223,7 @@ export type Group = {
 	title: string;
 	description: string;
 	created_at: string;
+	creator?: PublicUser;
 };
 
 export type GroupDetail = Group & {
@@ -363,6 +364,10 @@ export const groupAPI = {
 			method: 'POST',
 			body: { status },
 		});
+	},
+
+	getEventAttendees(eventId: string) {
+		return request<PublicUser[] | null>(`/api/events/${eventId}/attendees`);
 	},
 };
 

@@ -151,6 +151,37 @@ func TestGetCommentByID(t *testing.T) {
 			wantErr: nil,
 		},
 		{
+			name: "success_image_only_comment_returns_empty_content",
+			setup: func(t *testing.T, userRepo UserRepository, postRepo PostRepository, commentRepo CommentRepository) {
+				createTestUser(t, userRepo, "user-1", "user1@example.com")
+				p := &models.Post{ID: "post-1", UserID: "user-1", Content: "Post content", Privacy: models.PrivacyPublic}
+				if err := postRepo.CreatePost(p); err != nil {
+					t.Fatalf("failed to create post: %v", err)
+				}
+				c := &models.Comment{
+					ID:        "comment-1",
+					PostID:    "post-1",
+					UserID:    "user-1",
+					Content:   "",
+					ImageURL:  "uploads/comments/comment-1.png",
+					CreatedAt: "2026-06-30T12:00:00Z",
+				}
+				if err := commentRepo.CreateComment(c); err != nil {
+					t.Fatalf("failed to create image-only comment: %v", err)
+				}
+			},
+			id: "comment-1",
+			want: &models.Comment{
+				ID:        "comment-1",
+				PostID:    "post-1",
+				UserID:    "user-1",
+				Content:   "",
+				ImageURL:  "uploads/comments/comment-1.png",
+				CreatedAt: "2026-06-30T12:00:00Z",
+			},
+			wantErr: nil,
+		},
+		{
 			name:    "not_found",
 			setup:   func(t *testing.T, userRepo UserRepository, postRepo PostRepository, commentRepo CommentRepository) {},
 			id:      "non-existent-comment",
@@ -179,7 +210,7 @@ func TestGetCommentByID(t *testing.T) {
 				if err != nil {
 					t.Errorf("expected no error, got %v", err)
 				}
-				if got.ID != tt.want.ID || got.PostID != tt.want.PostID || got.UserID != tt.want.UserID || got.Content != tt.want.Content {
+				if got.ID != tt.want.ID || got.PostID != tt.want.PostID || got.UserID != tt.want.UserID || got.Content != tt.want.Content || got.ImageURL != tt.want.ImageURL {
 					t.Errorf("got %+v, want %+v", got, tt.want)
 				}
 			}
@@ -363,5 +394,44 @@ func TestGetCommentsForPost(t *testing.T) {
 	}
 	if comments[0].ID != "comment-1" || comments[1].ID != "comment-2" {
 		t.Errorf("expected comments ordered comment-1, comment-2; got %s, %s", comments[0].ID, comments[1].ID)
+	}
+}
+
+func TestGetCommentsForPost_ImageOnlyComment(t *testing.T) {
+	db := setupTestDB(t)
+	userRepo := NewUserRepository(db)
+	postRepo := NewPostRepository(db)
+	commentRepo := NewCommentRepository(db)
+
+	createTestUser(t, userRepo, "user-1", "user1@example.com")
+	p := &models.Post{ID: "post-1", UserID: "user-1", Content: "Post content", Privacy: models.PrivacyPublic}
+	if err := postRepo.CreatePost(p); err != nil {
+		t.Fatalf("failed to create post: %v", err)
+	}
+
+	c := &models.Comment{
+		ID:        "comment-1",
+		PostID:    "post-1",
+		UserID:    "user-1",
+		Content:   "",
+		ImageURL:  "uploads/comments/comment-1.png",
+		CreatedAt: "2026-06-30T12:00:00Z",
+	}
+	if err := commentRepo.CreateComment(c); err != nil {
+		t.Fatalf("failed to create image-only comment: %v", err)
+	}
+
+	comments, err := commentRepo.GetCommentsForPost("post-1")
+	if err != nil {
+		t.Fatalf("GetCommentsForPost failed: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+	if comments[0].Content != "" {
+		t.Errorf("expected empty content, got %q", comments[0].Content)
+	}
+	if comments[0].ImageURL != "uploads/comments/comment-1.png" {
+		t.Errorf("expected image URL to round-trip, got %q", comments[0].ImageURL)
 	}
 }

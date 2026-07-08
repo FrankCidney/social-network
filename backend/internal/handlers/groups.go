@@ -197,3 +197,15 @@ func (h *GroupHandler) RSVPEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	response.NoContent(w)
 }
+
+func (h *GroupHandler) GetEventAttendees(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserFromContext(r.Context()).ID
+	eventID := r.PathValue("id")
+
+	attendees, err := h.service.GetEventAttendees(userID, eventID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, attendees)
+}

@@ -11,7 +11,6 @@ import {
 	LoaderCircle,
 	MessageCircle,
 	MoreHorizontal,
-	Share2,
 	X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -1193,10 +1192,6 @@ export default function FeedPage() {
 									>
 										<MessageCircle className="w-4 h-4" />
 										{commentLabel}
-									</button>
-									<button className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-indigo-600 transition-colors">
-										<Share2 className="w-4 h-4" />
-										Share
 									</button>
 								</div>
 

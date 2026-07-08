@@ -28,7 +28,7 @@ func (r *sqliteCommentRepo) CreateComment(c *models.Comment) error {
 	const query = `
 		INSERT INTO comments (id, post_id, user_id, content, image_url, parent_comment_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
- 
+
 	_, err := r.db.Exec(query,
 		c.ID, c.PostID, c.UserID, c.Content, nullableString(c.ImageURL), c.ParentCommentID, c.CreatedAt,
 	)
@@ -40,9 +40,9 @@ func (r *sqliteCommentRepo) CreateComment(c *models.Comment) error {
 
 func (r *sqliteCommentRepo) GetCommentByID(id string) (*models.Comment, error) {
 	const query = `
-		SELECT id, post_id, user_id, content, COALESCE(image_url, ''), parent_comment_id, created_at
+		SELECT id, post_id, user_id, COALESCE(content, ''), COALESCE(image_url, ''), parent_comment_id, created_at
 		FROM comments WHERE id = ?`
- 
+
 	c := &models.Comment{}
 	err := r.db.QueryRow(query, id).Scan(
 		&c.ID, &c.PostID, &c.UserID, &c.Content, &c.ImageURL, &c.ParentCommentID, &c.CreatedAt,
@@ -76,17 +76,17 @@ func (r *sqliteCommentRepo) DeleteComment(id string) error {
 
 func (r *sqliteCommentRepo) GetCommentsForPost(postID string) ([]*models.Comment, error) {
 	const query = `
-		SELECT id, post_id, user_id, content, COALESCE(image_url, ''), parent_comment_id, created_at
+		SELECT id, post_id, user_id, COALESCE(content, ''), COALESCE(image_url, ''), parent_comment_id, created_at
 		FROM comments
 		WHERE post_id = ?
 		ORDER BY created_at ASC`
- 
+
 	rows, err := r.db.Query(query, postID)
 	if err != nil {
 		return nil, fmt.Errorf("get comments for post: %w", err)
 	}
 	defer rows.Close()
- 
+
 	var comments []*models.Comment
 	for rows.Next() {
 		c := &models.Comment{}
@@ -100,6 +100,6 @@ func (r *sqliteCommentRepo) GetCommentsForPost(postID string) ([]*models.Comment
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows error: %w", err)
 	}
-	
+
 	return comments, nil
 }
