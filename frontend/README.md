@@ -10,7 +10,9 @@ Create `frontend/.env.local` from `frontend/.env.example`:
 cp .env.example .env.local
 ```
 
-For local development with the backend on port `8080`, use:
+For local development, the frontend falls back to `http://localhost:8080` when `NEXT_PUBLIC_API_URL` is unset.
+
+Set `NEXT_PUBLIC_API_URL` only if you want to override that default:
 
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:8080
@@ -25,4 +27,4 @@ npm install
 npm run dev
 ```
 
-The frontend runs at `http://localhost:3000` by default and sends API requests to `NEXT_PUBLIC_API_URL`.
+The frontend runs at `http://localhost:3000` by default and sends API requests to `NEXT_PUBLIC_API_URL` when set, otherwise `http://localhost:8080`.

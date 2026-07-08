@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { profileAPI } from "@/lib/api";
+import { getWebSocketUrl } from "@/lib/runtime-config";
 
 interface WebSocketContextType {
   socket: WebSocket | null;
@@ -18,10 +19,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     let ws: WebSocket | null = null;
     let cancelled = false;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
-    const wsUrl = apiUrl
-      ? `${apiUrl.replace(/^http/, "ws")}/api/ws`
-      : `ws://${window.location.host}/api/ws`;
+    const wsUrl = getWebSocketUrl();
 
     async function connect() {
       try {

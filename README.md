@@ -26,7 +26,7 @@ Full-stack social network built with Go, Next.js, WebSockets, and SQLite.
 App: `http://localhost:3000`  
 API: `http://localhost:8080`
 
-If needed, set `frontend/.env.local` to:
+The frontend defaults to `http://localhost:8080` for API requests in local development. You only need `frontend/.env.local` if you want a different backend URL:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8080
@@ -37,8 +37,16 @@ NEXT_PUBLIC_API_URL=http://localhost:8080
 From the repo root:
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:8080 docker compose up --build
+docker compose up --build
 ```
 
 App: `http://localhost:3000`  
 API: `http://localhost:8080`
+
+This starts the frontend and backend containers together. The backend stores its SQLite database in the Compose-managed `sqlite_data` volume.
+
+If the frontend needs to talk to a backend on a different host, override the public API URL when building:
+
+```bash
+NEXT_PUBLIC_API_URL=http://your-backend-host:8080 docker compose up --build
+```
