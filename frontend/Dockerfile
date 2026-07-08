@@ -2,7 +2,13 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# If package-lock.json exists, npm ci for a fast, reproducible install.
+# If it's missing, fall back to npm install, which generates it.
+RUN if [ -f package-lock.json ]; then \
+      npm ci; \
+    else \
+      npm install; \
+    fi
 
 # --- Build stage ---
 FROM node:20-alpine AS builder
